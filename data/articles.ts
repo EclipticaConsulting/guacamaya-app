@@ -32,5 +32,16 @@ export const ARTICLES: Article[] = [
     author: "Guacamaya",
     publishedAt: "2025-08-11T12:30:00Z",
     readMins: 3
-  }
+  },
+  {
+  id: "3",
+  slug: "reuters-llega-a-venezuela-primer-buque-de-chevron-para-exportar-crudo-a-ee-uu",
+  title: "Reuters: Llega a Venezuela primer buque de Chevron para exportar crudo a EE. UU.",
+  summary: "Primer cargamento de petróleo venezolano bajo licencia de EE. UU. zarpó hacia refinerías estadounidenses.",
+  coverUrl: "https://guacamayave.com/wp-content/uploads/2025/08/shutterstock_185359775-940x528-1.jpg",
+  tag: "Economía",
+  author: "Redacción",
+  publishedAt: "2025-08-13T05:35:25Z",
+  readMins: 2
+},
 ];
