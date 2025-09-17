@@ -1,4 +1,5 @@
-  import { useEffect, useMemo, useState, useRef } from "react";
+// app/index.tsx
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   SafeAreaView,
   Text,
@@ -8,52 +9,54 @@ import {
   ScrollView,
   useWindowDimensions,
   Animated,
-  Platform,
   RefreshControl,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
-import SearchBar from "../components/SearchBar";
-import ArticleList from "../components/ArticleList";
-import { ARTICLES } from "../data/articles";
-import logo from "../assets/guacamaya.png";
+import { Link } from "expo-router";
 
-/** Ajusta este tipo a tu shape real */
-type Article = {
-  id?: string | number;
-  slug?: string;
+import SearchBar from "../../components/SearchBar";
+import logo from "../../assets/guacamaya.png";
+
+// Data sources
+import { useArticles } from "../../src/hooks/useArticles";
+import { supabase } from "../../src/supabaseClient";
+import { ARTICLES } from "../../data/articles";
+
+/** ---------- Tipos unificados ---------- */
+type UIArticle = {
+  id: string;
   title: string;
   summary: string;
   tag: string;
   image?: string;
+  content?: string | null;
+  author?: string | null;
+  date?: string | null;
 };
 
 type Tag = string;
 
+/** ---------- Paleta / estilos ---------- */
 const COLORS = {
-  // Paleta principal vibrante
-  bg: "#0A0E27",           // Fondo oscuro profundo
-  bgLight: "#141B3C",      // Fondo secundario
-  surface: "#1E2841",      // Superficies
-  
-  // Texto con jerarquía
-  text: "#FFFFFF",         // Texto principal
-  textMuted: "#8B92B3",    // Texto secundario
-  textAccent: "#64FFDA",   // Texto de acento
-  
-  // Colores vibrantes
-  accentPrimary: "#6366F1",   // Índigo vibrante
-  accentSecondary: "#EC4899", // Rosa/Magenta
-  accentTertiary: "#10B981",  // Verde esmeralda
-  accentWarning: "#F59E0B",   // Ámbar
-  
-  // Gradientes
+  bg: "#0A0E27",
+  bgLight: "#141B3C",
+  surface: "#1E2841",
+
+  text: "#FFFFFF",
+  textMuted: "#8B92B3",
+  textAccent: "#64FFDA",
+
+  accentPrimary: "#6366F1",
+  accentSecondary: "#EC4899",
+  accentTertiary: "#10B981",
+  accentWarning: "#F59E0B",
+
   gradientStart: "#667EEA",
   gradientMid: "#764BA2",
   gradientEnd: "#F093FB",
-  
-  // Efectos
+
   glassBg: "rgba(255, 255, 255, 0.05)",
   glassBorder: "rgba(255, 255, 255, 0.1)",
   shadow: "rgba(0, 0, 0, 0.5)",
@@ -69,21 +72,66 @@ const TAG_GRADIENTS = [
   ["#30CFD0", "#330867"],
 ];
 
+/** ---------- Normalizadores ---------- */
+const normalizeFromSupabase = (list: any[]): UIArticle[] =>
+  (list ?? []).map((it) => ({
+    id: String(it.id),
+    title: it.title ?? "",
+    summary: it.excerpt ?? "",
+    tag: (Array.isArray(it.tags) && it.tags[0]) ? it.tags[0] : "Noticias",
+    image: it.cover_url ?? undefined,
+    content: it.content ?? null,
+    author: it.author ?? null,
+    date: it.date ?? null,
+  }));
+
+// Para el fallback local (data/articles)
+const normalizeFromLocal = (list: any[]): UIArticle[] =>
+  (list ?? []).map((it) => ({
+    id: String(it.id ?? it.slug ?? Math.random().toString(36).slice(2)),
+    title: it.title ?? "",
+    summary: it.summary ?? "",
+    tag: it.tag ?? "Noticias",
+    image: it.image ?? undefined,
+    content: it.content ?? null,
+    author: it.author ?? null,
+    date: it.date ?? null,
+  }));
+
+/** =======================================================
+ *                       HomeScreen
+ *  Combina ambas versiones y unifica navegación/animaciones
+ * ======================================================= */
 export default function HomeScreen() {
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTag, setSelectedTag] = useState<Tag | null>(null);
-  
+
   // Animaciones
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const logoRotate = useRef(new Animated.Value(0)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  const A = ARTICLES as Article[];
+  // Datos desde Supabase
+  const { articles: rawArticles, loading, errorMsg, refetch } = useArticles();
+  const supaArticles: UIArticle[] = useMemo(
+    () => normalizeFromSupabase(rawArticles),
+    [rawArticles]
+  );
 
-  // Animación de entrada
+  // Fallback local si no hay artículos válidos de Supabase
+  const localArticles: UIArticle[] = useMemo(
+    () => normalizeFromLocal(ARTICLES as any[]),
+    []
+  );
+
+  const A: UIArticle[] = (supaArticles && supaArticles.length > 0)
+    ? supaArticles
+    : localArticles;
+
+  // Animación de entrada + loop sutil del logo
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -99,7 +147,6 @@ export default function HomeScreen() {
       }),
     ]).start();
 
-    // Animación sutil del logo
     Animated.loop(
       Animated.sequence([
         Animated.timing(logoRotate, {
@@ -116,7 +163,7 @@ export default function HomeScreen() {
     ).start();
   }, []);
 
-  // Debounce de búsqueda
+  // Debounce búsqueda
   useEffect(() => {
     const id = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), 220);
     return () => clearTimeout(id);
@@ -125,25 +172,30 @@ export default function HomeScreen() {
   // Tags únicos ordenados
   const tags = useMemo<string[]>(() => {
     const uniq = Array.from(new Set(A.map((a) => a.tag)));
-    return uniq.sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+    return uniq.sort((x, y) => x.localeCompare(y, "es", { sensitivity: "base" }));
   }, [A]);
 
   // Artículo destacado
-  const featured = useMemo<Article | null>(() => {
+  const featured = useMemo<UIArticle | null>(() => {
     const base = debouncedQ || selectedTag ? filteredFrom(A, debouncedQ, selectedTag) : A;
     return base.length ? base[0] : null;
   }, [A, debouncedQ, selectedTag]);
 
   // Lista filtrada
-  const filtered = useMemo<Article[]>(() => {
+  const filtered = useMemo<UIArticle[]>(() => {
     return filteredFrom(A, debouncedQ, selectedTag);
   }, [A, debouncedQ, selectedTag]);
 
-  // Pull-to-refresh
+  // Pull-to-refresh: pide refetch al hook si existe
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    setRefreshing(false);
+    try {
+      await refetch?.();
+    } catch (e) {
+      // noop
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const clearFilters = () => {
@@ -161,25 +213,35 @@ export default function HomeScreen() {
     outputRange: ["0deg", "2deg"],
   });
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 100],
-    outputRange: [1, 0.8],
-  });
+  /** ---------- Loading / Error (con fallback local) ---------- */
+  if (loading && supaArticles.length === 0) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: "center", justifyContent: "center" }}>
+        <StatusBar style="light" />
+        <Text style={{ color: COLORS.textMuted }}>Cargando artículos…</Text>
+      </SafeAreaView>
+    );
+  }
+
+  // Si hay error en Supabase pero tenemos fallback, seguimos mostrando UI normalmente
+  // Si NO hay fallback (improbable), mostramos el error
+  if (errorMsg && A.length === 0) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: "center", justifyContent: "center" }}>
+        <StatusBar style="light" />
+        <Text style={{ color: COLORS.textMuted }}>Error: {errorMsg}</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
       <StatusBar style="light" />
-      
+
       {/* Fondo con gradiente animado */}
       <LinearGradient
         colors={[COLORS.bg, COLORS.bgLight, COLORS.bg]}
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          top: 0,
-          bottom: 0,
-        }}
+        style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
       />
 
       <Animated.ScrollView
@@ -215,7 +277,7 @@ export default function HomeScreen() {
               position: "relative",
             }}
           >
-            {/* Efecto de brillo */}
+            {/* Efecto brillo */}
             <View
               style={{
                 position: "absolute",
@@ -226,7 +288,7 @@ export default function HomeScreen() {
                 opacity: 0.5,
               }}
             />
-            
+
             <Animated.Image
               source={logo}
               style={{
@@ -241,8 +303,7 @@ export default function HomeScreen() {
               }}
               resizeMode="contain"
             />
-            
-            {/* Texto elegante */}
+
             <Text
               style={{
                 color: COLORS.text,
@@ -259,18 +320,17 @@ export default function HomeScreen() {
           </LinearGradient>
         </Animated.View>
 
-        {/* Tabs con efecto glassmorphism */}
+        {/* Tabs con glassmorphism */}
         <BlurView
-  intensity={25}           // ajusta 0–100
-  tint="dark"              // "light" | "dark" | "default"
-  style={{
-    backgroundColor: COLORS.glassBg,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: COLORS.glassBorder,
-  }}
->
-
+          intensity={25}
+          tint="dark"
+          style={{
+            backgroundColor: COLORS.glassBg,
+            borderTopWidth: 1,
+            borderBottomWidth: 1,
+            borderColor: COLORS.glassBorder,
+          }}
+        >
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -294,7 +354,7 @@ export default function HomeScreen() {
           </ScrollView>
         </BlurView>
 
-        {/* Buscador mejorado */}
+        {/* Buscador */}
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
           <EnhancedSearchBar value={q} onChange={setQ} />
           {(selectedTag || q) && (
@@ -319,16 +379,16 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Título de sección con estilo */}
+        {/* Título de sección */}
         <ModernSectionTitle title={selectedTag || "Últimas Noticias"} />
 
-        {/* Hero destacado ultra moderno */}
+        {/* Hero destacado */}
         {featured && <UltraFeaturedCard article={featured} />}
 
-        {/* Lista con cards modernos */}
+        {/* Lista */}
         <View style={{ paddingHorizontal: 16, paddingBottom: 20 }}>
           {filtered.slice(1).map((article, index) => (
-            <ModernArticleCard key={article.id || index} article={article} index={index} />
+            <ModernArticleCard key={article.id ?? `${index}`} article={article} index={index} />
           ))}
         </View>
       </Animated.ScrollView>
@@ -336,9 +396,9 @@ export default function HomeScreen() {
   );
 }
 
-/** ---------- Componentes mejorados ---------- */
+/** ---------- Helpers / Componentes ---------- */
 
-function filteredFrom(list: Article[], q: string, tag: Tag | null) {
+function filteredFrom(list: UIArticle[], q: string, tag: Tag | null) {
   const k = q.trim().toLowerCase();
   return list.filter((a) => {
     const title = a.title?.toLowerCase?.() ?? "";
@@ -443,10 +503,7 @@ function EnhancedSearchBar({ value, onChange }: { value: string; onChange: (text
       }}
     >
       <Text style={{ fontSize: 18, marginRight: 10 }}>🔍</Text>
-      <SearchBar
-        value={value}
-        onChange={onChange}
-      />
+      <SearchBar value={value} onChange={onChange} />
     </View>
   );
 }
@@ -489,7 +546,7 @@ function ModernSectionTitle({ title }: { title: string }) {
   );
 }
 
-function UltraFeaturedCard({ article }: { article: Article }) {
+function UltraFeaturedCard({ article }: { article: UIArticle }) {
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -518,109 +575,111 @@ function UltraFeaturedCard({ article }: { article: Article }) {
         marginBottom: 20,
       }}
     >
-      <Pressable
-        style={{
-          backgroundColor: COLORS.surface,
-          borderRadius: 24,
-          overflow: "hidden",
-          shadowColor: COLORS.accentPrimary,
-          shadowOffset: { width: 0, height: 10 },
-          shadowOpacity: 0.2,
-          shadowRadius: 20,
-          elevation: 8,
-        }}
-      >
-        {/* Imagen con overlay gradient */}
-        <View style={{ position: "relative", height: 220 }}>
-          {article.image ? (
-            <Image source={{ uri: article.image }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
-          ) : (
-            <LinearGradient
-              colors={[COLORS.gradientStart, COLORS.gradientEnd]}
-              style={{ width: "100%", height: "100%" }}
-            />
-          )}
-          
-          {/* Overlay gradient */}
-          <LinearGradient
-            colors={["transparent", "rgba(0,0,0,0.7)"]}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 100,
-            }}
-          />
-          
-          {/* Tag flotante */}
-          <View
-            style={{
-              position: "absolute",
-              top: 16,
-              left: 16,
-              backgroundColor: COLORS.accentPrimary,
-              paddingHorizontal: 14,
-              paddingVertical: 6,
-              borderRadius: 16,
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.2,
-              shadowRadius: 4,
-            }}
-          >
-            <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 12 }}>
-              {article.tag}
-            </Text>
-          </View>
-        </View>
+      <Link href={`/article/${article.id}`} asChild>
+        <Pressable
+          style={{
+            backgroundColor: COLORS.surface,
+            borderRadius: 24,
+            overflow: "hidden",
+            shadowColor: COLORS.accentPrimary,
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.2,
+            shadowRadius: 20,
+            elevation: 8,
+          }}
+        >
+          {/* Imagen con overlay gradient */}
+          <View style={{ position: "relative", height: 220 }}>
+            {article.image ? (
+              <Image source={{ uri: article.image }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+            ) : (
+              <LinearGradient
+                colors={[COLORS.gradientStart, COLORS.gradientEnd]}
+                style={{ width: "100%", height: "100%" }}
+              />
+            )}
 
-        {/* Contenido */}
-        <View style={{ padding: 20 }}>
-          <Text
-            style={{
-              color: COLORS.text,
-              fontSize: 24,
-              fontWeight: "800",
-              marginBottom: 10,
-              lineHeight: 30,
-            }}
-          >
-            {article.title}
-          </Text>
-          <Text
-            style={{
-              color: COLORS.textMuted,
-              fontSize: 15,
-              lineHeight: 22,
-              marginBottom: 16,
-            }}
-          >
-            {article.summary}
-          </Text>
-          
-          {/* Botón de acción */}
-          <LinearGradient
-            colors={[COLORS.accentPrimary, COLORS.accentSecondary]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={{
-              paddingVertical: 12,
-              borderRadius: 20,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 14 }}>
-              Leer más →
+            {/* Overlay gradient */}
+            <LinearGradient
+              colors={["transparent", "rgba(0,0,0,0.7)"]}
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 100,
+              }}
+            />
+
+            {/* Tag flotante */}
+            <View
+              style={{
+                position: "absolute",
+                top: 16,
+                left: 16,
+                backgroundColor: COLORS.accentPrimary,
+                paddingHorizontal: 14,
+                paddingVertical: 6,
+                borderRadius: 16,
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+              }}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 12 }}>
+                {article.tag}
+              </Text>
+            </View>
+          </View>
+
+          {/* Contenido */}
+          <View style={{ padding: 20 }}>
+            <Text
+              style={{
+                color: COLORS.text,
+                fontSize: 24,
+                fontWeight: "800",
+                marginBottom: 10,
+                lineHeight: 30,
+              }}
+            >
+              {article.title}
             </Text>
-          </LinearGradient>
-        </View>
-      </Pressable>
+            <Text
+              style={{
+                color: COLORS.textMuted,
+                fontSize: 15,
+                lineHeight: 22,
+                marginBottom: 16,
+              }}
+            >
+              {article.summary}
+            </Text>
+
+            {/* Botón de acción */}
+            <LinearGradient
+              colors={[COLORS.accentPrimary, COLORS.accentSecondary]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{
+                paddingVertical: 12,
+                borderRadius: 20,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 14 }}>
+                Leer más →
+              </Text>
+            </LinearGradient>
+          </View>
+        </Pressable>
+      </Link>
     </Animated.View>
   );
 }
 
-function ModernArticleCard({ article, index }: { article: Article; index: number }) {
+function ModernArticleCard({ article, index }: { article: UIArticle; index: number }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
 
@@ -641,8 +700,6 @@ function ModernArticleCard({ article, index }: { article: Article; index: number
     ]).start();
   }, [index]);
 
-  const gradient = TAG_GRADIENTS[index % TAG_GRADIENTS.length];
-
   return (
     <Animated.View
       style={{
@@ -651,50 +708,52 @@ function ModernArticleCard({ article, index }: { article: Article; index: number
         marginBottom: 16,
       }}
     >
-      <Pressable
-        style={{
-          backgroundColor: COLORS.surface,
-          borderRadius: 16,
-          padding: 16,
-          flexDirection: "row",
-          alignItems: "center",
-          borderWidth: 1,
-          borderColor: COLORS.glassBorder,
-        }}
-      >
-        {/* Icono/Número decorativo */}
-        <LinearGradient
-          colors={[COLORS.gradientStart, COLORS.gradientEnd] as const}
+      <Link href={`/article/${article.id}`} asChild>
+        <Pressable
           style={{
-            width: 50,
-            height: 50,
-            borderRadius: 12,
+            backgroundColor: COLORS.surface,
+            borderRadius: 16,
+            padding: 16,
+            flexDirection: "row",
             alignItems: "center",
-            justifyContent: "center",
-            marginRight: 16,
+            borderWidth: 1,
+            borderColor: COLORS.glassBorder,
           }}
         >
-          <Text style={{ color: "#FFFFFF", fontSize: 20, fontWeight: "800" }}>
-            {(index + 2).toString().padStart(2, "0")}
-          </Text>
-        </LinearGradient>
+          {/* Icono/Número decorativo */}
+          <LinearGradient
+            colors={[COLORS.gradientStart, COLORS.gradientEnd] as const}
+            style={{
+              width: 50,
+              height: 50,
+              borderRadius: 12,
+              alignItems: "center",
+              justifyContent: "center",
+              marginRight: 16,
+            }}
+          >
+            <Text style={{ color: "#FFFFFF", fontSize: 20, fontWeight: "800" }}>
+              {(index + 2).toString().padStart(2, "0")}
+            </Text>
+          </LinearGradient>
 
-        {/* Contenido */}
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: COLORS.textAccent, fontSize: 11, marginBottom: 4, fontWeight: "600" }}>
-            {article.tag}
-          </Text>
-          <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: "700", marginBottom: 4 }}>
-            {article.title}
-          </Text>
-          <Text style={{ color: COLORS.textMuted, fontSize: 13, lineHeight: 18 }} numberOfLines={2}>
-            {article.summary}
-          </Text>
-        </View>
+          {/* Contenido */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: COLORS.textAccent, fontSize: 11, marginBottom: 4, fontWeight: "600" }}>
+              {article.tag}
+            </Text>
+            <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: "700", marginBottom: 4 }}>
+              {article.title}
+            </Text>
+            <Text style={{ color: COLORS.textMuted, fontSize: 13, lineHeight: 18 }} numberOfLines={2}>
+              {article.summary}
+            </Text>
+          </View>
 
-        {/* Flecha */}
-        <Text style={{ color: COLORS.textMuted, fontSize: 20, marginLeft: 10 }}>→</Text>
-      </Pressable>
+          {/* Flecha */}
+          <Text style={{ color: COLORS.textMuted, fontSize: 20, marginLeft: 10 }}>→</Text>
+        </Pressable>
+      </Link>
     </Animated.View>
   );
 }
