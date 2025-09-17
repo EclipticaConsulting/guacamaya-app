@@ -1,8 +1,10 @@
+// app/_layout.tsx
 import { Stack } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import React, { useEffect, useState, useCallback } from "react";
 import { View } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
+import { StatusBar } from "expo-status-bar";
 import AnimatedSplash from "../components/AnimatedSplash";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -13,31 +15,32 @@ export default function RootLayout() {
 
   useEffect(() => {
     (async () => {
+      // Precargas opcionales (fonts/assets) aquí…
       setReady(true);
     })();
   }, []);
 
-  const handleAnimFinish = useCallback(async () => {
+  const handleAnimFinish = useCallback(() => {
     setAnimDone(true);
-    try { await SplashScreen.hideAsync(); } catch {}
   }, []);
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: "#171717" }}>
+      <StatusBar style="light" backgroundColor="#171717" />
       <SafeAreaProvider>
         <Stack screenOptions={{ headerShown: false }}>
-          {/* Rutas principales */}
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-
-          {/* Pantallas de auth */}
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="signup" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="signup" />
         </Stack>
       </SafeAreaProvider>
 
-      {/* Overlay animado encima de todo al inicio */}
       {ready && !animDone && (
-        <AnimatedSplash onFinish={handleAnimFinish} background="#FFFFFF" />
+        <AnimatedSplash
+          onFinish={handleAnimFinish}
+          bg="#171717"
+          logo={require("../assets/guacamaya-logo.png")}
+        />
       )}
     </View>
   );
